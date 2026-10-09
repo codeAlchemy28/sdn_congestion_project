@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.venv312/
+venv/
+
+# Environment and secrets
+.env
+.env.*
+
+# Dashboard — keep local, exclude from GitHub
+dashboard/
+dashboard_state.py
+dashboard_state.py.save
+
+# Generated test output
+pingall
+*.log
+*.pcap
+X

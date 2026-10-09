@@ -1,0 +1,107 @@
+
+from os_ken.base import app_manager
+from os_ken.controller import ofp_event
+from os_ken.controller.handler import CONFIG_DISPATCHER, set_ev_cls
+from os_ken.ofproto import ofproto_v1_3
+
+
+class StaticController(app_manager.OSKenApp):
+    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
+
+    def __init__(self, *args, **kwargs):
+        super(StaticController, self).__init__(*args, **kwargs)
+        self.logger.info("STATIC ROUTING CONTROLLER STARTED")
+        self.logger.info("Traffic will remain on Path A")
+
+    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+    def switch_features_handler(self, ev):
+        datapath = ev.msg.datapath
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        dpid = datapath.id
+
+        # Remove old destination-specific forwarding rules so that
+        # stale adaptive Path B rules cannot override static routing.
+        match = parser.OFPMatch(
+            eth_type=0x0800,
+            ipv4_dst="10.0.0.2"
+        )
+
+        delete = parser.OFPFlowMod(
+            datapath=datapath,
+            command=ofproto.OFPFC_DELETE,
+            out_port=ofproto.OFPP_ANY,
+            out_group=ofproto.OFPG_ANY,
+            match=match
+        )
+        datapath.send_msg(delete)
+
+        # Install fixed Path A forwarding rules.
+        path_a_ports = {
+            1: 2,  # s1 -> s2
+            2: 2,  # s2 -> s3
+            3: 2,  # s3 -> s5
+            5: 2,  # s5 -> h2
+        }
+
+        if dpid in path_a_ports:
+            out_port = path_a_ports[dpid]
+            flow_match = parser.OFPMatch(
+                eth_type=0x0800,
+                ipv4_dst="10.0.0.2"
+            )
+            actions = [parser.OFPActionOutput(out_port)]
+            instructions = [
+                parser.OFPInstructionActions(
+                    ofproto.OFPIT_APPLY_ACTIONS, actions
+                )
+            ]
+
+            flow = parser.OFPFlowMod(
+                datapath=datapath,
+                priority=100,
+                match=flow_match,
+                instructions=instructions
+            )
+            datapath.send_msg(flow)
+
+            self.logger.info(
+                "[STATIC] s%d: destination 10.0.0.2 -> port %d",
+                dpid, out_port
+            )
+
+        # Return traffic from h2 to h1 through Path A.
+        reverse_ports = {
+            5: 1,  # s5 -> s3
+            3: 1,  # s3 -> s2
+            2: 1,  # s2 -> s1
+            1: 1,  # s1 -> h1
+        }
+
+        if dpid in reverse_ports:
+            out_port = reverse_ports[dpid]
+            reverse_match = parser.OFPMatch(
+                eth_type=0x0800,
+                ipv4_dst="10.0.0.1"
+            )
+            reverse_actions = [parser.OFPActionOutput(out_port)]
+            reverse_instructions = [
+                parser.OFPInstructionActions(
+                    ofproto.OFPIT_APPLY_ACTIONS,
+                    reverse_actions
+                )
+            ]
+
+            reverse_flow = parser.OFPFlowMod(
+                datapath=datapath,
+                priority=100,
+                match=reverse_match,
+                instructions=reverse_instructions
+            )
+            datapath.send_msg(reverse_flow)
+
+            self.logger.info(
+                "[STATIC] s%d: destination 10.0.0.1 -> port %d",
+                dpid, out_port
+            )
+

@@ -172,35 +172,33 @@ class CongestionController(app_manager.OSKenApp):
     def install_initial_path(self, datapath):
 
         dpid = datapath.id
+        parser = datapath.ofproto_parser
 
-        # --------------------------------------------------------
-        # Forward direction
-        #
-        # h1 -> s1 -> s2 -> s3 -> s5 -> h2
-        # --------------------------------------------------------
-
+        # Path A: h1 -> s1 -> s2 -> s3 -> s5 -> h2
         forward_ports = {
             1: 2,
             2: 2,
             3: 2,
-            5: 2
+            5: 2,
         }
 
+        # Reverse path: h2 -> s5 -> s3 -> s2 -> s1 -> h1
+        reverse_ports = {
+            1: 1,
+            2: 1,
+            3: 1,
+            5: 1,
+        }
+
+        # IPv4 traffic toward h2 follows Path A.
         if dpid in forward_ports:
-
-            parser = datapath.ofproto_parser
-
             match = parser.OFPMatch(
                 eth_type=0x0800,
                 ipv4_dst="10.0.0.2"
             )
-
             actions = [
-                parser.OFPActionOutput(
-                    forward_ports[dpid]
-                )
+                parser.OFPActionOutput(forward_ports[dpid])
             ]
-
             self.add_flow(
                 datapath,
                 priority=100,
@@ -208,34 +206,47 @@ class CongestionController(app_manager.OSKenApp):
                 actions=actions
             )
 
-        # --------------------------------------------------------
-        # Reverse direction
-        #
-        # h2 -> s5 -> s3 -> s2 -> s1 -> h1
-        # --------------------------------------------------------
-
-        reverse_ports = {
-            1: 1,
-            2: 1,
-            3: 1,
-            5: 1
-        }
-
+        # IPv4 traffic toward h1 follows the reverse path.
         if dpid in reverse_ports:
-
-            parser = datapath.ofproto_parser
-
             match = parser.OFPMatch(
                 eth_type=0x0800,
                 ipv4_dst="10.0.0.1"
             )
-
             actions = [
-                parser.OFPActionOutput(
-                    reverse_ports[dpid]
-                )
+                parser.OFPActionOutput(reverse_ports[dpid])
             ]
+            self.add_flow(
+                datapath,
+                priority=100,
+                match=match,
+                actions=actions
+            )
 
+        # ARP requests targeting h2 travel along Path A.
+        if dpid in forward_ports:
+            match = parser.OFPMatch(
+                eth_type=0x0806,
+                arp_tpa="10.0.0.2"
+            )
+            actions = [
+                parser.OFPActionOutput(forward_ports[dpid])
+            ]
+            self.add_flow(
+                datapath,
+                priority=100,
+                match=match,
+                actions=actions
+            )
+
+        # ARP requests/replies targeting h1 use the reverse path.
+        if dpid in reverse_ports:
+            match = parser.OFPMatch(
+                eth_type=0x0806,
+                arp_tpa="10.0.0.1"
+            )
+            actions = [
+                parser.OFPActionOutput(reverse_ports[dpid])
+            ]
             self.add_flow(
                 datapath,
                 priority=100,
@@ -245,7 +256,8 @@ class CongestionController(app_manager.OSKenApp):
 
         print(
             f"[FLOW] s{dpid}: "
-            f"Initial Path A rules installed"
+            "Initial Path A IPv4 and ARP rules installed",
+            flush=True
         )
 
     # ============================================================

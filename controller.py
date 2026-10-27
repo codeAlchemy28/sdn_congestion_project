@@ -38,6 +38,8 @@ class CongestionController(app_manager.OSKenApp):
 
         self.congested = False
         self.congestion_time = None
+        self.path_b_last_packets = None
+        self.recovery_time = None
 
         # Initialize dashboard state
         initialize_state()
@@ -334,6 +336,39 @@ class CongestionController(app_manager.OSKenApp):
             # s3 -> s5
             # ----------------------------------------------------
 
+            # Observe traffic leaving s1 toward Path B (s1-eth3).
+            if dpid == 1:
+                for stat in ev.msg.body:
+                    if stat.port_no != 3:
+                        continue
+
+                    current_packets = stat.tx_packets
+
+                    if self.path_b_last_packets is None:
+                        self.path_b_last_packets = current_packets
+                        return
+
+                    previous_packets = self.path_b_last_packets
+                    self.path_b_last_packets = current_packets
+
+                    if (
+                        self.congested
+                        and self.congestion_time is not None
+                        and self.recovery_time is None
+                        and current_packets > previous_packets
+                    ):
+                        self.recovery_time = (
+                            current_time - self.congestion_time
+                        )
+                        print(
+                            "[RECOVERY] First increase in Path B "
+                            "traffic observed at s1-eth3 after "
+                            f"{self.recovery_time:.3f} seconds. "
+                            "Timing is limited by statistics polling.",
+                            flush=True
+                        )
+                    return
+
             if dpid != 3:
                 return
 
@@ -465,6 +500,11 @@ class CongestionController(app_manager.OSKenApp):
 
                     self.congestion_time = (
                         time.monotonic()
+                    )
+                    print(
+                        '[TIMING] Congestion detected; '
+                        f'monotonic={self.congestion_time:.6f}',
+                        flush=True
                     )
 
                     print()
